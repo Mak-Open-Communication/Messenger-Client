@@ -1,0 +1,145 @@
+name: Build
+
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  PYTHON_VERSION: "3.13"
+  FLET_CLI_VERSION: "0.80.5"
+  FLUTTER_VERSION: "3.38.x"
+  JAVA_VERSION: "17"
+  PYTHONUTF8: 1
+  FLET_CLI_NO_RICH_OUTPUT: 1
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  build-linux:
+    name: Build Linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install Linux build toolchain
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            clang cmake ninja-build libgtk-3-dev
+
+      - name: Install flet-cli
+        run: pip install flet-cli==${{ env.FLET_CLI_VERSION }}
+
+      - name: Build Linux app
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="1.0.0"
+          fi
+          flet build linux \
+            --verbose \
+            --build-number=${{ github.run_number }} \
+            --build-version="$VERSION"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MessengerClient-linux
+          path: build/linux
+          if-no-files-found: error
+
+  build-apk:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install flet-cli
+        run: pip install flet-cli==${{ env.FLET_CLI_VERSION }}
+
+      - name: Build APK
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="1.0.0"
+          fi
+          flet build apk \
+            --verbose \
+            --build-number=${{ github.run_number }} \
+            --build-version="$VERSION"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MessengerClient-apk
+          path: build/apk/app-release.apk
+          if-no-files-found: error
+
+  release:
+    name: Create Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-linux, build-apk]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: MessengerClient-linux
+          path: artifacts/linux
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: MessengerClient-apk
+          path: artifacts/apk
+
+      - name: Rename artifacts
+        run: |
+          cd artifacts/linux
+          tar -czf ../../linux-build.tar.gz .
+          cd ../..
+          cp artifacts/apk/app-release.apk android-build.apk
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            linux-build.tar.gz
+            android-build.apk
