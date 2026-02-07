@@ -57,6 +57,7 @@ jobs:
             VERSION="1.0.0"
           fi
           flet build linux \
+            --module-name src/main \
             --verbose \
             --build-number=${{ github.run_number }} \
             --build-version="$VERSION"
@@ -102,6 +103,7 @@ jobs:
             VERSION="1.0.0"
           fi
           flet build apk \
+            --module-name src/main \
             --verbose \
             --build-number=${{ github.run_number }} \
             --build-version="$VERSION"
