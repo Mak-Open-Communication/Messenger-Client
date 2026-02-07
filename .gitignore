@@ -1,0 +1,14 @@
+.venv
+venv
+
+__pycache__
+
+.idea
+
+.claude
+CLAUDE.md
+
+build/
+*.sha1
+
+debug_screenshot.png
