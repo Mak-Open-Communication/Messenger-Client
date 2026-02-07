@@ -2,7 +2,7 @@ import flet as ft
 
 
 async def main(page: ft.Page):
-    page.title = "Messenger"
+    page.title = "GHosty"
     page.theme_mode = ft.ThemeMode.LIGHT
     page.padding = 30
     if page.web or page.platform in (ft.PagePlatform.LINUX, ft.PagePlatform.WINDOWS, ft.PagePlatform.MACOS):
