@@ -63,7 +63,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: MessengerClient-linux
+          name: GHosty-linux
           path: build/linux
           if-no-files-found: error
 
@@ -108,7 +108,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: MessengerClient-apk
+          name: GHosty-apk
           path: build/apk/app-release.apk
           if-no-files-found: error
 
@@ -122,12 +122,12 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: MessengerClient-linux
+          name: GHosty-linux
           path: artifacts/linux
 
       - uses: actions/download-artifact@v4
         with:
-          name: MessengerClient-apk
+          name: GHosty-apk
           path: artifacts/apk
 
       - name: Rename artifacts
