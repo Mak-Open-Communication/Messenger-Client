@@ -58,6 +58,8 @@ jobs:
           fi
           flet build linux \
             --product GHosty \
+            --artifact ghosty-client.bin \
+            --icon assets/icon.png \
             --verbose \
             --build-number=${{ github.run_number }} \
             --build-version="$VERSION"
