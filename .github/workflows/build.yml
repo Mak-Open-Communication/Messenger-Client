@@ -63,7 +63,7 @@ jobs:
             --verbose \
             --build-number=${{ github.run_number }} \
             --build-version="$VERSION" \
-            --exclude .venv .git .github build
+            --exclude .venv .git .github build aar.txt
 
       - name: Rename executable
         run: |
@@ -120,7 +120,7 @@ jobs:
             --verbose \
             --build-number=${{ github.run_number }} \
             --build-version="$VERSION" \
-            --exclude .venv .git .github build
+            --exclude .venv .git .github build aar.txt
 
       - uses: actions/upload-artifact@v4
         with:
@@ -170,16 +170,18 @@ jobs:
 
       - name: Package artifacts
         run: |
+          TAG="${{ github.ref_name }}"
           cd artifacts/linux
-          tar -czf ../../ghosty-linux.tar.gz .
+          tar -czf "../../ghosty-linux-${TAG}.tar.gz" .
           cd ../..
-          cp artifacts/apk/app-release.apk ghosty-android.apk
+          cp artifacts/apk/app-release.apk "ghosty-android-${TAG}.apk"
 
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ github.ref_name }}" \
+          TAG="${{ github.ref_name }}"
+          gh release create "$TAG" \
             --generate-notes \
-            ghosty-linux.tar.gz \
-            ghosty-android.apk
+            "ghosty-linux-${TAG}.tar.gz" \
+            "ghosty-android-${TAG}.apk"

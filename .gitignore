@@ -12,3 +12,5 @@ build/
 *.sha1
 
 debug_screenshot.png
+
+aar.txt
