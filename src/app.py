@@ -289,8 +289,9 @@ class Application:
                 result = await self.api.get_chat_info(self._current_chat.chat_id)
                 if result.success and result.data:
                     self._current_chat = Chat.from_dict(result.data) if isinstance(result.data, dict) else result.data
-                    self._update_peer_status()
+                self._update_peer_status()
                 await self._reload_current_messages()
+            self.page.update()
 
     # --- Peer status ---
 
@@ -303,7 +304,6 @@ class Application:
             self._chat_view.set_peer_status(peer.display_name, peer.in_online)
         else:
             self._chat_view.set_peer_status(None, False)
-            self._chat_view._header_title.value = self._current_chat.chat_name
 
     # --- Render ---
 
@@ -428,7 +428,6 @@ class Application:
         try:
             self._current_chat = chat
             self._chat_view.set_chat(chat)
-            self._update_peer_status()
             self._update_chat_selection()
 
             result = await self.api.get_messages(chat.chat_id, limit=50)
@@ -440,8 +439,7 @@ class Application:
             result = await self.api.get_chat_info(chat.chat_id)
             if result.success and result.data:
                 self._current_chat = Chat.from_dict(result.data) if isinstance(result.data, dict) else result.data
-                self._update_peer_status()
-
+            self._update_peer_status()
             self.page.update()
         except Exception as e:
             logger.error(f"Chat selection failed: {e}", exc_info=True)

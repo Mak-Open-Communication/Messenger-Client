@@ -123,6 +123,8 @@ class ChatView:
             self._header_subtitle.color = ft.Colors.GREEN if is_online else ft.Colors.ON_SURFACE_VARIANT
             self._header_subtitle.visible = True
         else:
+            if self._current_chat:
+                self._header_title.value = self._current_chat.chat_name
             self._header_subtitle.visible = False
 
     def set_chat(self, chat: Optional[Chat]):
