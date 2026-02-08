@@ -15,7 +15,7 @@ from src.settings.view import SettingsView
 logger = logging.getLogger("ghosty.app")
 
 BREAKPOINT_WIDTH = 768
-KEEPALIVE_INTERVAL = 45
+RECONNECT_INTERVAL = 5
 
 
 class Application:
@@ -30,7 +30,7 @@ class Application:
         self._current_chat: Optional[Chat] = None
         self._is_wide: bool = True
         self._screen: str = "auth"
-        self._keepalive_task: Optional[asyncio.Task] = None
+        self._connection_task: Optional[asyncio.Task] = None
 
         self._auth_view: Optional[AuthView] = None
         self._chat_list_view: Optional[ChatListView] = None
@@ -70,7 +70,6 @@ class Application:
                     self._current_user_id = int(user_info.get("user_id") or 0)
                     self._current_username = user_info.get("username") or ""
                     self._current_display_name = user_info.get("display_name") or ""
-                    self._start_keepalive()
                     await self._show_main_screen()
                     return
             except Exception as e:
@@ -83,6 +82,7 @@ class Application:
     # --- Screen transitions ---
 
     async def _show_auth_screen(self):
+        self._stop_connection()
         self._screen = "auth"
         self._auth_view = AuthView(self.page, on_login_success=self._handle_auth)
         host, port = await self.storage.get_server_address()
@@ -103,10 +103,12 @@ class Application:
             on_send_message=self._on_send_message,
             on_back=lambda e: self._on_chat_back(),
             on_chat_menu_action=self._on_chat_menu_action,
+            on_message_action=self._on_message_action,
             current_user_id=self._current_user_id,
         )
         self._render()
         await self._load_chats()
+        self._start_connection()
 
     async def _show_settings(self):
         self._screen = "settings"
@@ -139,36 +141,149 @@ class Application:
         )
         self.page.show_dialog(dialog)
 
-    # --- Keepalive ---
-
-    def _start_keepalive(self):
-        self._stop_keepalive()
-        self._keepalive_task = asyncio.create_task(self._keepalive_loop())
-
-    def _stop_keepalive(self):
-        if self._keepalive_task and not self._keepalive_task.done():
-            self._keepalive_task.cancel()
-        self._keepalive_task = None
-
-    async def _keepalive_loop(self):
-        try:
-            while True:
-                await asyncio.sleep(KEEPALIVE_INTERVAL)
-                if self.api.connected:
-                    try:
-                        await self.api.verify_token()
-                    except Exception as e:
-                        logger.warning(f"Keepalive failed: {e}")
-                else:
-                    break
-        except asyncio.CancelledError:
-            pass
-
     async def _settings_click(self, e):
         await self._show_settings()
 
     async def _settings_back_click(self, e):
         await self._back_from_settings()
+
+    # --- Connection loop + Subscription ---
+
+    def _start_connection(self):
+        self._stop_connection()
+        self._connection_task = asyncio.create_task(self._connection_loop())
+
+    def _stop_connection(self):
+        if self._connection_task and not self._connection_task.done():
+            self._connection_task.cancel()
+        self._connection_task = None
+
+    async def _connection_loop(self):
+        try:
+            while True:
+                if not self.api.connected:
+                    logger.info("Connection lost, attempting reconnect...")
+                    ok = await self.api.reconnect()
+                    if not ok:
+                        await asyncio.sleep(RECONNECT_INTERVAL)
+                        continue
+                    logger.info("Reconnected successfully")
+                    await self._on_reconnected()
+
+                try:
+                    await self._run_subscription()
+                except Exception as e:
+                    logger.warning(f"Subscription ended: {e}")
+                    await asyncio.sleep(RECONNECT_INTERVAL)
+
+        except asyncio.CancelledError:
+            pass
+
+    async def _run_subscription(self):
+        token = self.api.get_token()
+        if not token:
+            await asyncio.sleep(RECONNECT_INTERVAL)
+            return
+
+        sub_client = await self.api.create_subscription_client()
+        if not sub_client:
+            await asyncio.sleep(RECONNECT_INTERVAL)
+            return
+
+        try:
+            async with sub_client.subscribe(event_type="subscribe", token=token) as sub:
+                async for event in sub:
+                    try:
+                        await self._handle_event(event)
+                    except Exception as e:
+                        logger.error(f"Event handler error: {e}", exc_info=True)
+        finally:
+            try:
+                await sub_client.disconnect()
+            except Exception:
+                pass
+
+    async def _handle_event(self, event):
+        if not isinstance(event, dict):
+            return
+        event_type = event.get("type", "")
+        data = event.get("data", {})
+        if not isinstance(data, dict):
+            data = {}
+
+        if event_type == "new_message":
+            await self._on_new_message_event(data)
+        elif event_type == "message_edited" or event_type == "message_deleted":
+            await self._on_message_changed_event(data)
+        elif event_type == "user_online":
+            await self._on_user_status_event(data, True)
+        elif event_type == "user_offline":
+            await self._on_user_status_event(data, False)
+        elif event_type in ("chat_created", "member_added", "member_removed"):
+            await self._on_chat_list_changed()
+
+    async def _on_new_message_event(self, data: dict):
+        chat_id = data.get("chat_id")
+        sender_id = data.get("sender_user_id")
+
+        if self._current_chat and self._current_chat.chat_id == chat_id:
+            if sender_id != self._current_user_id:
+                await self._reload_current_messages()
+
+        if self._screen == "main":
+            await self._load_chats()
+
+    async def _on_message_changed_event(self, data: dict):
+        chat_id = data.get("chat_id")
+        if self._current_chat and self._current_chat.chat_id == chat_id:
+            await self._reload_current_messages()
+
+    async def _on_user_status_event(self, data: dict, is_online: bool):
+        user_id = data.get("user_id")
+        if self._current_chat:
+            for member in self._current_chat.members:
+                if member.account_id == user_id:
+                    member.in_online = is_online
+                    self._update_peer_status()
+                    self.page.update()
+                    break
+
+    async def _on_chat_list_changed(self):
+        if self._screen == "main":
+            await self._load_chats()
+
+    async def _reload_current_messages(self):
+        if not self._current_chat or not self._chat_view:
+            return
+        result = await self.api.get_messages(self._current_chat.chat_id, limit=50)
+        if result.success and result.data:
+            msgs = [Message.from_dict(m) if isinstance(m, dict) else m for m in result.data]
+            msgs.sort(key=lambda m: m.message_id)
+            self._chat_view.set_messages(msgs)
+            self.page.update()
+
+    async def _on_reconnected(self):
+        if self._screen == "main":
+            await self._load_chats()
+            if self._current_chat:
+                result = await self.api.get_chat_info(self._current_chat.chat_id)
+                if result.success and result.data:
+                    self._current_chat = Chat.from_dict(result.data) if isinstance(result.data, dict) else result.data
+                    self._update_peer_status()
+                await self._reload_current_messages()
+
+    # --- Peer status ---
+
+    def _update_peer_status(self):
+        if not self._current_chat or not self._chat_view:
+            return
+        others = [m for m in self._current_chat.members if m.account_id != self._current_user_id]
+        if len(others) == 1:
+            peer = others[0]
+            self._chat_view.set_peer_status(peer.display_name, peer.in_online)
+        else:
+            self._chat_view.set_peer_status(None, False)
+            self._chat_view._header_title.value = self._current_chat.chat_name
 
     # --- Render ---
 
@@ -218,9 +333,7 @@ class Application:
 
     def _update_chat_selection(self):
         is_narrow = not self._is_wide
-        # Update ChatView internal visibility (placeholder vs chat)
         self._chat_view.build(is_narrow=is_narrow)
-        # In narrow mode, swap which root is shown
         if is_narrow:
             has_chat = self._current_chat is not None
             self._chat_list_view.build().visible = not has_chat
@@ -273,7 +386,6 @@ class Application:
         await self.storage.set_server_address(host, port)
         await self.storage.save_user_info(account_username, account_display_name, account_id)
 
-        self._start_keepalive()
         await self._show_main_screen()
 
     # --- Chat list ---
@@ -296,6 +408,7 @@ class Application:
         try:
             self._current_chat = chat
             self._chat_view.set_chat(chat)
+            self._update_peer_status()
             self._update_chat_selection()
 
             result = await self.api.get_messages(chat.chat_id, limit=50)
@@ -303,6 +416,12 @@ class Application:
                 msgs = [Message.from_dict(m) if isinstance(m, dict) else m for m in result.data]
                 msgs.sort(key=lambda m: m.message_id)
                 self._chat_view.set_messages(msgs)
+
+            result = await self.api.get_chat_info(chat.chat_id)
+            if result.success and result.data:
+                self._current_chat = Chat.from_dict(result.data) if isinstance(result.data, dict) else result.data
+                self._update_peer_status()
+
             self.page.update()
         except Exception as e:
             logger.error(f"Chat selection failed: {e}", exc_info=True)
@@ -363,6 +482,102 @@ class Application:
         elif not result.success:
             self._show_error(result.error_message or "Failed to send message")
         self.page.update()
+
+    # --- Message context menu ---
+
+    async def _on_message_action(self, message: Message):
+        is_mine = message.sender_user and message.sender_user.account_id == self._current_user_id
+
+        buttons = []
+
+        if is_mine:
+            async def edit_click(e):
+                self.page.pop_dialog()
+                await self._show_edit_message_dialog(message)
+
+            buttons.append(
+                ft.TextButton(
+                    content=ft.Row(
+                        [ft.Icon(ft.Icons.EDIT, size=20), ft.Text("Edit")],
+                        spacing=12,
+                    ),
+                    on_click=edit_click,
+                )
+            )
+
+        async def delete_click(e):
+            self.page.pop_dialog()
+            await self._show_delete_message_dialog(message)
+
+        buttons.append(
+            ft.TextButton(
+                content=ft.Row(
+                    [ft.Icon(ft.Icons.DELETE, size=20, color=ft.Colors.ERROR), ft.Text("Delete", color=ft.Colors.ERROR)],
+                    spacing=12,
+                ),
+                on_click=delete_click,
+            )
+        )
+
+        dialog = ft.AlertDialog(
+            content=ft.Column(buttons, tight=True, spacing=0),
+        )
+        self.page.show_dialog(dialog)
+
+    async def _show_edit_message_dialog(self, message: Message):
+        text_field = ft.TextField(
+            label="Edit message",
+            value=message.text or "",
+            autofocus=True,
+            multiline=True,
+            min_lines=1,
+            max_lines=5,
+        )
+
+        async def do_edit(e):
+            new_text = text_field.value.strip()
+            if new_text and new_text != (message.text or ""):
+                result = await self.api.edit_message(message.message_id, new_text)
+                self.page.pop_dialog()
+                if result.success:
+                    await self._reload_current_messages()
+                else:
+                    self._show_error(result.error_message or "Failed to edit message")
+            else:
+                self.page.pop_dialog()
+
+        dialog = ft.AlertDialog(
+            title=ft.Text("Edit Message"),
+            content=text_field,
+            actions=[
+                ft.TextButton("Cancel", on_click=lambda e: self.page.pop_dialog()),
+                ft.ElevatedButton("Save", on_click=do_edit),
+            ],
+        )
+        self.page.show_dialog(dialog)
+
+    async def _show_delete_message_dialog(self, message: Message):
+        preview = (message.text or "")[:50]
+        if len(message.text or "") > 50:
+            preview += "..."
+
+        async def do_delete(e):
+            result = await self.api.delete_message(message.message_id)
+            self.page.pop_dialog()
+            if result.success:
+                await self._reload_current_messages()
+            else:
+                self._show_error(result.error_message or "Failed to delete message")
+
+        dialog = ft.AlertDialog(
+            title=ft.Text("Delete Message"),
+            content=ft.Text(f'Delete "{preview}"?'),
+            actions=[
+                ft.TextButton("Cancel", on_click=lambda e: self.page.pop_dialog()),
+                ft.ElevatedButton("Delete", on_click=do_delete, color=ft.Colors.ERROR),
+            ],
+        )
+        self.page.show_dialog(dialog)
 
     # --- Chat menu ---
 
@@ -489,7 +704,7 @@ class Application:
             self._show_error(result.error_message or "Failed to revoke session")
 
     async def _on_logout(self):
-        self._stop_keepalive()
+        self._stop_connection()
         await self.api.logout_token()
         await self.storage.clear_all()
         self.api.clear_token()

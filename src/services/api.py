@@ -40,11 +40,47 @@ class ApiService:
             await self._client.disconnect()
         self._client = None
 
+    def get_client(self) -> Optional[AsyncClient]:
+        return self._client
+
     def set_token(self, token: str):
         self._token = token
 
+    def get_token(self) -> Optional[str]:
+        return self._token
+
     def clear_token(self):
         self._token = None
+
+    async def create_subscription_client(self) -> Optional[AsyncClient]:
+        if not self._client:
+            return None
+        host = self._client.server_host
+        port = self._client.server_port
+        try:
+            sub_client = AsyncClient(server_host=host, server_port=port)
+            await sub_client.connect()
+            return sub_client
+        except Exception as e:
+            logger.warning(f"Subscription client connect failed: {e}")
+            return None
+
+    async def reconnect(self) -> bool:
+        if not self._client:
+            return False
+        host = self._client.server_host
+        port = self._client.server_port
+        try:
+            await self._client.disconnect()
+        except Exception:
+            pass
+        try:
+            self._client = AsyncClient(server_host=host, server_port=port)
+            await self._client.connect()
+            return True
+        except Exception as e:
+            logger.warning(f"Reconnect failed: {e}")
+            return False
 
     async def _call(self, transaction: str, **kwargs) -> Result:
         if not self.connected:

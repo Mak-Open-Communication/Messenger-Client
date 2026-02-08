@@ -12,12 +12,14 @@ class ChatView:
         on_send_message: Callable[[int, str], Awaitable],
         on_back: Callable,
         on_chat_menu_action: Callable[[str, Chat], Awaitable],
+        on_message_action: Callable[[Message], Awaitable] = None,
         current_user_id: int = 0,
     ):
         self.page = page
         self.on_send_message = on_send_message
         self.on_back = on_back
         self.on_chat_menu_action = on_chat_menu_action
+        self.on_message_action = on_message_action
         self.current_user_id = current_user_id
 
         self._current_chat: Optional[Chat] = None
@@ -29,6 +31,7 @@ class ChatView:
         )
         self._message_input = MessageInput(on_send=self._handle_send)
         self._header_title = ft.Text("", weight=ft.FontWeight.W_500, size=16)
+        self._header_subtitle = ft.Text("", size=12, visible=False)
 
         self._placeholder = ft.Container(
             content=ft.Text(
@@ -71,7 +74,11 @@ class ChatView:
             content=ft.Row(
                 controls=[
                     self._back_btn,
-                    ft.Container(content=self._header_title, expand=True),
+                    ft.Column(
+                        controls=[self._header_title, self._header_subtitle],
+                        spacing=0,
+                        expand=True,
+                    ),
                     menu_btn,
                 ],
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -109,10 +116,20 @@ class ChatView:
             self._back_btn.visible = is_narrow
         return self._root
 
+    def set_peer_status(self, display_name: str | None, is_online: bool):
+        if display_name:
+            self._header_title.value = display_name
+            self._header_subtitle.value = "online" if is_online else "offline"
+            self._header_subtitle.color = ft.Colors.GREEN if is_online else ft.Colors.ON_SURFACE_VARIANT
+            self._header_subtitle.visible = True
+        else:
+            self._header_subtitle.visible = False
+
     def set_chat(self, chat: Optional[Chat]):
         self._current_chat = chat
         if chat:
             self._header_title.value = chat.chat_name
+        self._header_subtitle.visible = False
         self._messages.clear()
         self._message_list.controls.clear()
 
@@ -123,17 +140,25 @@ class ChatView:
     def append_message(self, message: Message):
         self._messages.append(message)
         is_mine = message.sender_user and message.sender_user.account_id == self.current_user_id
-        self._message_list.controls.append(MessageBubble(message, is_mine))
+        self._message_list.controls.append(
+            MessageBubble(message, is_mine, on_context_menu=self._on_message_context)
+        )
 
     def _rebuild_message_list(self):
         self._message_list.controls.clear()
         for msg in self._messages:
             is_mine = msg.sender_user and msg.sender_user.account_id == self.current_user_id
-            self._message_list.controls.append(MessageBubble(msg, is_mine))
+            self._message_list.controls.append(
+                MessageBubble(msg, is_mine, on_context_menu=self._on_message_context)
+            )
 
     async def _handle_send(self, text: str):
         if self._current_chat:
             await self.on_send_message(self._current_chat.chat_id, text)
+
+    async def _on_message_context(self, message: Message):
+        if self.on_message_action:
+            await self.on_message_action(message)
 
     async def _menu_action(self, action: str):
         if self._current_chat:
