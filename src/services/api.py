@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import logging
 from typing import Optional
@@ -24,6 +25,7 @@ class ApiService:
     def __init__(self):
         self._client: Optional[AsyncClient] = None
         self._token: Optional[str] = None
+        self._call_lock = asyncio.Lock()
 
     @property
     def connected(self) -> bool:
@@ -85,12 +87,13 @@ class ApiService:
     async def _call(self, transaction: str, **kwargs) -> Result:
         if not self.connected:
             return Result(success=False, errors=[("connection", "Not connected to server")], data=None)
-        try:
-            raw = await self._client.call(transaction=transaction, **kwargs)
-            return Result.from_raw(raw)
-        except Exception as e:
-            logger.error(f"API call '{transaction}' failed: {e}")
-            return Result(success=False, errors=[("exception", str(e))], data=None)
+        async with self._call_lock:
+            try:
+                raw = await self._client.call(transaction=transaction, **kwargs)
+                return Result.from_raw(raw)
+            except Exception as e:
+                logger.error(f"API call '{transaction}' failed: {e}")
+                return Result(success=False, errors=[("exception", str(e))], data=None)
 
     async def _auth_call(self, transaction: str, **kwargs) -> Result:
         if not self._token:

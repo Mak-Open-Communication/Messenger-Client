@@ -244,11 +244,9 @@ class Application:
 
     async def _on_new_message_event(self, data: dict):
         chat_id = data.get("chat_id")
-        sender_id = data.get("sender_user_id")
 
         if self._current_chat and self._current_chat.chat_id == chat_id:
-            if sender_id != self._current_user_id:
-                await self._reload_current_messages()
+            await self._reload_current_messages()
 
         if self._screen == "main":
             await self._load_chats()
@@ -276,8 +274,9 @@ class Application:
         if not self._current_chat or not self._chat_view:
             return
         result = await self.api.get_messages(self._current_chat.chat_id, limit=50)
-        if result.success and result.data:
-            msgs = [Message.from_dict(m) if isinstance(m, dict) else m for m in result.data]
+        if result.success:
+            raw = result.data or []
+            msgs = [Message.from_dict(m) if isinstance(m, dict) else m for m in raw]
             msgs.sort(key=lambda m: m.message_id)
             self._chat_view.set_messages(msgs)
             self.page.update()
@@ -494,12 +493,11 @@ class Application:
 
     async def _on_send_message(self, chat_id: int, text: str):
         result = await self.api.send_message(chat_id, text)
-        if result.success and result.data:
-            msg = Message.from_dict(result.data) if isinstance(result.data, dict) else result.data
-            self._chat_view.append_message(msg)
-        elif not result.success:
+        if result.success:
+            await self._reload_current_messages()
+        else:
             self._show_error(result.error_message or "Failed to send message")
-        self.page.update()
+            self.page.update()
 
     # --- Message context menu ---
 
@@ -561,8 +559,10 @@ class Application:
                     await self._reload_current_messages()
                 else:
                     self._show_error(result.error_message or "Failed to edit message")
+                self.page.update()
             else:
                 self.page.pop_dialog()
+                self.page.update()
 
         dialog = ft.AlertDialog(
             title=ft.Text("Edit Message"),
@@ -586,6 +586,7 @@ class Application:
                 await self._reload_current_messages()
             else:
                 self._show_error(result.error_message or "Failed to delete message")
+            self.page.update()
 
         dialog = ft.AlertDialog(
             title=ft.Text("Delete Message"),
