@@ -63,7 +63,7 @@ jobs:
             --verbose \
             --build-number=${{ github.run_number }} \
             --build-version="$VERSION" \
-            --exclude .venv .git .github build aar.txt
+            --exclude .venv .git .github build aar.txt __pycache__
 
       - name: Rename executable
         run: |
@@ -120,7 +120,7 @@ jobs:
             --verbose \
             --build-number=${{ github.run_number }} \
             --build-version="$VERSION" \
-            --exclude .venv .git .github build aar.txt
+            --exclude .venv .git .github build aar.txt __pycache__
 
       - uses: actions/upload-artifact@v4
         with:
