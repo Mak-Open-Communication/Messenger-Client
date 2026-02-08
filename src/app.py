@@ -16,6 +16,7 @@ logger = logging.getLogger("ghosty.app")
 
 BREAKPOINT_WIDTH = 768
 RECONNECT_INTERVAL = 5
+KEEPALIVE_INTERVAL = 45
 
 
 class Application:
@@ -170,12 +171,31 @@ class Application:
                     logger.info("Reconnected successfully")
                     await self._on_reconnected()
 
+                keepalive = asyncio.create_task(self._keepalive_loop())
                 try:
                     await self._run_subscription()
                 except Exception as e:
                     logger.warning(f"Subscription ended: {e}")
                     await asyncio.sleep(RECONNECT_INTERVAL)
+                finally:
+                    keepalive.cancel()
+                    try:
+                        await keepalive
+                    except asyncio.CancelledError:
+                        pass
 
+        except asyncio.CancelledError:
+            pass
+
+    async def _keepalive_loop(self):
+        try:
+            while True:
+                await asyncio.sleep(KEEPALIVE_INTERVAL)
+                if self.api.connected:
+                    try:
+                        await self.api.verify_token()
+                    except Exception:
+                        pass
         except asyncio.CancelledError:
             pass
 

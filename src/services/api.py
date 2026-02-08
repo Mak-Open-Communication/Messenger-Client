@@ -58,7 +58,7 @@ class ApiService:
         host = self._client.server_host
         port = self._client.server_port
         try:
-            sub_client = AsyncClient(server_host=host, server_port=port)
+            sub_client = AsyncClient(server_host=host, server_port=port, read_timeout=None)
             await sub_client.connect()
             return sub_client
         except Exception as e:

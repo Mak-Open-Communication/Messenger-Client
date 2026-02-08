@@ -50,6 +50,10 @@ class AsyncServerClientConnection:
         """Get read timeout."""
         return self._read_timeout
 
+    @read_timeout.setter
+    def read_timeout(self, value: Optional[float]) -> None:
+        self._read_timeout = value
+
     @property
     def write_timeout(self) -> Optional[float]:
         """Get write timeout."""

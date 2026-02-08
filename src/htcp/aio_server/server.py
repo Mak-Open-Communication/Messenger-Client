@@ -505,6 +505,9 @@ class AsyncServer:
                     task=task
                 )
 
+                # Disable read timeout — subscribed clients don't send packets
+                client.read_timeout = None
+
             except Exception as e:
                 self.logger.error(f"Subscription start error: {e}")
                 await self._send_subscribe_error(
